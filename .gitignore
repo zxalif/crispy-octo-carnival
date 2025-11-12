@@ -20,6 +20,8 @@ data/*.db
 .env.local
 .env.example
 .env.production
+.env.*.bak
+.env.*.backup
 
 # Logs - exclude all logs
 logs/
@@ -52,3 +54,8 @@ build/
 
 # Alembic
 alembic/versions/__pycache__/
+
+# VPN Configuration (contains private keys)
+.config/
+*.conf
+!nginx/nginx.conf
