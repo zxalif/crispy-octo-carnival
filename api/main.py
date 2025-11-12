@@ -202,13 +202,76 @@ async def health():
             "error": str(e)[:100]
         }
     
+    # Check Redis connectivity (optional - for rate limiting)
+    try:
+        redis_host = config.redis_host
+        redis_port = config.redis_port
+        redis_db = config.redis_db
+        redis_password = getattr(config, 'redis_password', None) or ""
+        
+        if redis_host and redis_host.strip():
+            try:
+                import redis
+                r = redis.Redis(
+                    host=redis_host,
+                    port=redis_port,
+                    db=redis_db,
+                    password=redis_password if redis_password else None,
+                    socket_connect_timeout=2,
+                    decode_responses=False
+                )
+                r.ping()
+                
+                health_status["services"]["redis"] = {
+                    "status": "healthy",
+                    "connected": True,
+                    "host": redis_host,
+                    "port": redis_port,
+                    "db": redis_db
+                }
+            except ImportError:
+                # Redis module not installed - not a critical failure
+                health_status["services"]["redis"] = {
+                    "status": "not_available",
+                    "connected": False,
+                    "message": "Redis module not installed"
+                }
+                logger.debug("Redis module not installed for health check")
+            except Exception as redis_error:
+                # Redis connection failed - don't degrade overall health
+                # Redis is optional (falls back to memory storage)
+                health_status["services"]["redis"] = {
+                    "status": "unhealthy",
+                    "connected": False,
+                    "host": redis_host,
+                    "port": redis_port,
+                    "error": str(redis_error)[:100]
+                }
+                logger.debug("Redis health check failed", error=str(redis_error))
+        else:
+            # Redis not configured - skip check
+            health_status["services"]["redis"] = {
+                "status": "not_configured",
+                "message": "Redis host not configured"
+            }
+    except Exception as e:
+        # Don't fail health check if Redis check itself fails
+        logger.debug("Redis health check failed", error=str(e))
+        health_status["services"]["redis"] = {
+            "status": "error",
+            "error": str(e)[:100]
+        }
+    
     # Determine overall status
     if health_status["status"] == "healthy":
-        # Check if any service is unhealthy
+        # Check if any critical service is unhealthy
+        # Note: Redis and Reddit API are optional and don't degrade overall health
+        critical_services = ["database", "scheduler", "config"]
         for service, status_info in health_status["services"].items():
-            if isinstance(status_info, dict) and status_info.get("status") == "unhealthy":
-                health_status["status"] = "degraded"
-                break
+            if service in critical_services and isinstance(status_info, dict):
+                if status_info.get("status") == "unhealthy":
+                    health_status["status"] = "degraded"
+                    break
     
     status_code = 200 if health_status["status"] == "healthy" else 503
     return JSONResponse(content=health_status, status_code=status_code)

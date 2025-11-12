@@ -29,7 +29,14 @@ END
 -- Grant privileges
 GRANT ALL PRIVILEGES ON DATABASE rixly TO rixly;
 \c rixly
+
+-- Grant schema permissions (required for PostgreSQL 15+)
 GRANT ALL ON SCHEMA public TO rixly;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO rixly;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO rixly;
+
+-- Make rixly the owner of the public schema (ensures full control)
+ALTER SCHEMA public OWNER TO rixly;
 EOF
 
 echo "Database setup complete!"
