@@ -17,12 +17,12 @@ config = get_config()
 # Determine storage URI (Redis if available, otherwise memory)
 def get_storage_uri() -> str:
     """Get Redis storage URI or fallback to memory."""
-    redis_host = getattr(config, 'redis_host', None) or os.getenv('REDIS_HOST', 'host.docker.internal')
+    redis_host = getattr(config, 'redis_host', None) or os.getenv('REDIS_HOST', 'localhost')
     redis_port = getattr(config, 'redis_port', None) or int(os.getenv('REDIS_PORT', '6379'))
     redis_db = getattr(config, 'redis_db', None) or int(os.getenv('REDIS_DB', '0'))
     redis_password = getattr(config, 'redis_password', None) or os.getenv('REDIS_PASSWORD', '')
     
-    # Try to use Redis if host is configured (allow both host.docker.internal and localhost)
+    # Try to use Redis if host is configured (localhost works with host network mode)
     if redis_host and redis_host.strip():
         # Build Redis URI
         if redis_password:

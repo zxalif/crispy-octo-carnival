@@ -106,8 +106,8 @@ class Config(BaseSettings):
     
     # Redis Configuration (Optional - for rate limiting and caching)
     redis_host: str = Field(
-        default="host.docker.internal",
-        description="Redis host (defaults to 'host.docker.internal' for Docker accessing host Redis, use 'localhost' for local dev)"
+        default="localhost",
+        description="Redis host (defaults to 'localhost' for host network mode or local dev)"
     )
     redis_port: int = Field(
         default=6379,

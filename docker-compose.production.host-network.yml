@@ -1,28 +1,22 @@
-# Docker Compose for Rixly - PRODUCTION
+# Docker Compose for Rixly - PRODUCTION (Host Network Mode)
 # Uses native PostgreSQL and Redis (not Docker containers)
 # Port: 8000
 # 
-# IMPORTANT: This file is for production deployment on VPS
-# - Uses host network mode (localhost works directly)
-# - Uses native PostgreSQL on host (via localhost)
-# - Uses native Redis on host (via localhost)
-# - No source code mounting (production build)
-# - Resource limits configured
-# - Scheduler can be enabled/disabled via environment variable
-#
-# NETWORK MODE: host
+# IMPORTANT: This version uses host network mode
 # - Container shares host's network stack
-# - localhost in container = host's localhost
-# - Simpler configuration, no host.docker.internal needed
-# - No port mapping needed (uses host ports directly)
+# - localhost works directly (no host.docker.internal needed)
+# - No port mapping needed
+# - Less network isolation (container has full host network access)
 #
-# SCALING:
-# - Current: Single instance, internal-only (no nginx needed)
-# - For scaling: Remove container_name and use --scale flag (requires nginx)
-# - For Docker Swarm: Use deploy.replicas (see SCALING_GUIDE.md)
-# NOTE: nginx is ONLY needed if scaling to multiple instances
-
-# version: '3.8'  # Removed - obsolete in newer Docker Compose
+# PROS:
+# - Simpler configuration (localhost works)
+# - Better performance (no NAT)
+# - No extra_hosts needed
+#
+# CONS:
+# - No network isolation (security consideration)
+# - Can't run multiple containers on same port
+# - Containers can't use service names to communicate
 
 services:
   # ===== Rixly API Service =====
@@ -30,8 +24,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.production
-    container_name: rixly-api  # Single instance - internal use only
-    network_mode: host  # Use host network - localhost works directly!
+    container_name: rixly-api
+    network_mode: host  # Use host network - localhost works!
     environment:
       # API Configuration
       - API_KEY=${API_KEY}
@@ -59,13 +53,8 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - LOG_FILE=/app/logs/app.log
       - ENVIRONMENT=production
-      
-      # Scheduler (can be enabled for simple setups, or use separate scheduler service)
-      # For production, we recommend using the separate scheduler service below
       - SCHEDULER_ENABLED=${SCHEDULER_ENABLED:-false}
       - SCHEDULER_CHECK_INTERVAL=${SCHEDULER_CHECK_INTERVAL:-60}
-      
-      # Job Tracking
       - JOB_COOLDOWN_MINUTES=${JOB_COOLDOWN_MINUTES:-5}
       
       # Reddit Rate Limiting
@@ -85,7 +74,6 @@ services:
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
     volumes:
       - rixly_logs:/app/logs
-      # Note: No source code mounting in production (uses built image)
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -102,32 +90,16 @@ services:
           cpus: '1'
           memory: 2G
 
-  # ===== Scheduler Service (RECOMMENDED for Production) =====
-  # 
-  # WHY SEPARATE SCHEDULER?
-  # - Heavy scraping jobs won't block API response times
-  # - Better resource isolation
-  # - Can scale independently
-  #
-  # USAGE:
-  # - API only: docker compose -f docker-compose.production.yml up api
-  # - Scheduler only: docker compose -f docker-compose.production.yml up scheduler
-  # - Both: docker compose -f docker-compose.production.yml up
-  #
-  # SCALING:
-  # - For Docker Swarm: Add deploy.replicas (see SCALING_GUIDE.md)
-  # - For Docker Compose: Remove container_name and use --scale flag
-  #
+  # ===== Scheduler Service =====
   scheduler:
     build:
       context: .
       dockerfile: Dockerfile.production
-    container_name: rixly-scheduler  # Single instance - internal use only
+    container_name: rixly-scheduler
+    network_mode: host  # Use host network - localhost works!
     environment:
-      # Database (Native PostgreSQL on host)
-      # localhost works because we're using host network mode!
+      # Database (localhost works!)
       - DATABASE_URL=${DATABASE_URL}
-      # If DATABASE_URL not set, build from parts (localhost works!)
       - DATABASE_HOST=${DATABASE_HOST:-localhost}
       - DATABASE_PORT=${DATABASE_PORT:-5432}
       - DATABASE_NAME=${DATABASE_NAME:-rixly}
@@ -147,12 +119,8 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - LOG_FILE=/app/logs/app.log
       - ENVIRONMENT=production
-      
-      # Scheduler (enabled for this service)
       - SCHEDULER_ENABLED=true
       - SCHEDULER_CHECK_INTERVAL=${SCHEDULER_CHECK_INTERVAL:-60}
-      
-      # Job Tracking
       - JOB_COOLDOWN_MINUTES=${JOB_COOLDOWN_MINUTES:-5}
       
       # Reddit Rate Limiting
@@ -165,14 +133,22 @@ services:
       - REDDIT_MAX_COMMENTS_PER_POST=${REDDIT_MAX_COMMENTS_PER_POST:-500}
     volumes:
       - rixly_logs:/app/logs
-    network_mode: host  # Use host network - localhost works directly!
     restart: unless-stopped
     command: python scripts/run_scheduler.py
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          cpus: '1'
+          memory: 2G
 
 # ===== Volumes =====
-# NOTE: No networks section needed with host network mode
 volumes:
   rixly_logs:
     driver: local
     name: rixly-logs
+
+# NOTE: No networks section needed with host network mode
 
