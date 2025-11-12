@@ -15,7 +15,7 @@
 # - For Docker Swarm: Use deploy.replicas (see SCALING_GUIDE.md)
 # NOTE: nginx is ONLY needed if scaling to multiple instances
 
-version: '3.8'
+# version: '3.8'  # Removed - obsolete in newer Docker Compose
 
 services:
   # ===== Rixly API Service =====
