@@ -10,6 +10,8 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from core.logger import get_logger
 from core.llm_provider import get_llm
+from modules.analyzer.llm_cache import generate_cache_key
+from modules.database.storage import LeadStorage
 
 logger = get_logger(__name__)
 
@@ -97,14 +99,22 @@ Output: {
   "requirements": ["logo design"]
 }"""
     
-    def __init__(self):
-        """Initialize info extractor."""
+    def __init__(self, storage: Optional[LeadStorage] = None):
+        """
+        Initialize info extractor.
+        
+        Args:
+            storage: Optional LeadStorage instance for caching
+        """
         self.llm = get_llm()
-        logger.info("Initialized InfoExtractor")
+        self.storage = storage
+        logger.info("Initialized InfoExtractor", has_cache=storage is not None)
     
     def extract(self, text: str) -> Dict[str, Any]:
         """
         Extract structured information from text.
+        
+        Uses LLM cache if storage is available to prevent duplicate API calls.
         
         Args:
             text: Opportunity text to analyze
@@ -114,6 +124,14 @@ Output: {
         """
         if not text or len(text.strip()) < 10:
             return {}
+        
+        # Check cache first
+        if self.storage:
+            cache_key = generate_cache_key(text, "info_extraction")
+            cached_result = self.storage.get_llm_cache(cache_key, "info_extraction")
+            if cached_result:
+                logger.debug("Using cached info extraction result")
+                return cached_result
         
         try:
             user_message = f"""Extract structured information from this opportunity post:
@@ -178,6 +196,20 @@ Extract budget, timeline, requirements, skills, and location. Pay special attent
                 has_timeline=bool(result.get("timeline")),
                 has_requirements=bool(result.get("requirements"))
             )
+            
+            # Store in cache
+            if self.storage:
+                cache_key = generate_cache_key(text, "info_extraction")
+                try:
+                    self.storage.set_llm_cache(
+                        cache_key=cache_key,
+                        cache_type="info_extraction",
+                        result=result,
+                        text_preview=text[:1000]
+                    )
+                except Exception as e:
+                    # Log but don't fail - caching is best effort
+                    logger.warning("Failed to cache info extraction result", error=str(e))
             
             return result
             

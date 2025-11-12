@@ -48,7 +48,7 @@ async def process_keyword_search(
     processor = PlatformProcessor()
     parser = RedditParser()
     filter_module = RedditFilter()
-    analyzer = LeadAnalyzer()
+    analyzer = LeadAnalyzer(storage=storage)  # Pass storage for LLM caching
     manager = KeywordSearchManager(storage)
     
     all_posts = []
@@ -216,11 +216,15 @@ async def process_keyword_search(
         webhook_sender = get_webhook_sender()
         
         for lead_state in analyzed_leads:
+            
             # Save lead
             saved_lead = storage.save_lead(lead_state)
             if saved_lead:
                 stored_leads.append(saved_lead)
                 
+                # TODO: for this keyword if there is no lead generated then in future there would be no lead as well
+                # TODO: we have to make mark_content_scraped for all the leads for this keyword_searches
+                # TODO: we might lose coments only but the leds would be reaming same?
                 # Mark content as scraped
                 storage.mark_content_scraped(
                     keyword_search_id=keyword_search.id,

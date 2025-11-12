@@ -9,6 +9,8 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from core.logger import get_logger
 from core.llm_provider import get_llm
+from modules.analyzer.llm_cache import generate_cache_key
+from modules.database.storage import LeadStorage
 
 logger = get_logger(__name__)
 
@@ -61,10 +63,16 @@ Return JSON only, no explanation:
   "reasoning": "brief explanation of why this is/is not a lead"
 }"""
     
-    def __init__(self):
-        """Initialize classifier."""
+    def __init__(self, storage: Optional[LeadStorage] = None):
+        """
+        Initialize classifier.
+        
+        Args:
+            storage: Optional LeadStorage instance for caching
+        """
         self.llm = get_llm()
-        logger.info("Initialized OpportunityClassifier (no cache)")
+        self.storage = storage
+        logger.info("Initialized OpportunityClassifier", has_cache=storage is not None)
     
     def classify(
         self,
@@ -75,6 +83,8 @@ Return JSON only, no explanation:
         """
         Classify an opportunity.
         
+        Uses LLM cache if storage is available to prevent duplicate API calls.
+        
         Args:
             text: Text to classify
             matched_keywords: Keywords that matched
@@ -83,6 +93,14 @@ Return JSON only, no explanation:
         Returns:
             Classification result dictionary
         """
+        # Check cache first
+        if self.storage:
+            cache_key = generate_cache_key(text, "classification")
+            cached_result = self.storage.get_llm_cache(cache_key, "classification")
+            if cached_result:
+                logger.debug("Using cached classification result")
+                return cached_result
+        
         try:
             # Build user message with context
             service_provider_indicators = [
@@ -136,6 +154,20 @@ Classify this opportunity."""
                 type=result.get("opportunity_type"),
                 subtype=result.get("opportunity_subtype")
             )
+            
+            # Store in cache
+            if self.storage:
+                cache_key = generate_cache_key(text, "classification")
+                try:
+                    self.storage.set_llm_cache(
+                        cache_key=cache_key,
+                        cache_type="classification",
+                        result=result,
+                        text_preview=text[:1000]
+                    )
+                except Exception as e:
+                    # Log but don't fail - caching is best effort
+                    logger.warning("Failed to cache classification result", error=str(e))
             
             return result
             

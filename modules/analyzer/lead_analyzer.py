@@ -12,6 +12,7 @@ from modules.analyzer.classifier import OpportunityClassifier
 from modules.analyzer.extractor import ContactExtractor
 from modules.analyzer.scorer import LeadScorer
 from modules.analyzer.info_extractor import InfoExtractor
+from modules.database.storage import LeadStorage
 
 logger = get_logger(__name__)
 
@@ -19,12 +20,18 @@ logger = get_logger(__name__)
 class LeadAnalyzer:
     """Analyzes leads using LLM and scoring algorithms."""
     
-    def __init__(self):
-        """Initialize lead analyzer."""
-        self.classifier = OpportunityClassifier()
+    def __init__(self, storage: Optional[LeadStorage] = None):
+        """
+        Initialize lead analyzer.
+        
+        Args:
+            storage: Optional LeadStorage instance for LLM caching
+        """
+        self.storage = storage
+        self.classifier = OpportunityClassifier(storage=storage)
         self.extractor = ContactExtractor()
         self.scorer = LeadScorer()
-        self.info_extractor = InfoExtractor()
+        self.info_extractor = InfoExtractor(storage=storage)
         
         logger.info("Initialized LeadAnalyzer")
     

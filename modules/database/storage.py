@@ -14,7 +14,7 @@ from sqlalchemy.orm import sessionmaker, Session
 from core.config import get_config
 from core.logger import get_logger
 from core.state import KeywordSearchState, LeadState
-from modules.database.models import Base, KeywordSearch, Lead, ScrapedContent
+from modules.database.models import Base, KeywordSearch, Lead, ScrapedContent, LLMCache
 
 logger = get_logger(__name__)
 
@@ -594,6 +594,119 @@ class LeadStorage:
             
             return new_items
             
+        finally:
+            session.close()
+    
+    # LLM Cache Operations
+    
+    def get_llm_cache(
+        self,
+        cache_key: str,
+        cache_type: str
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get cached LLM result.
+        
+        Args:
+            cache_key: SHA256 hash of text content
+            cache_type: "classification" or "info_extraction"
+            
+        Returns:
+            Cached result dictionary or None if not found
+        """
+        session = self.get_session()
+        try:
+            cache_entry = session.query(LLMCache).filter(
+                and_(
+                    LLMCache.cache_key == cache_key,
+                    LLMCache.cache_type == cache_type
+                )
+            ).first()
+            
+            if cache_entry:
+                # Update usage stats
+                cache_entry.last_used_at = datetime.utcnow()
+                cache_entry.use_count += 1
+                session.commit()
+                
+                logger.debug(
+                    "LLM cache hit",
+                    cache_type=cache_type,
+                    use_count=cache_entry.use_count
+                )
+                return cache_entry.result
+            
+            return None
+            
+        finally:
+            session.close()
+    
+    def set_llm_cache(
+        self,
+        cache_key: str,
+        cache_type: str,
+        result: Dict[str, Any],
+        text_preview: Optional[str] = None
+    ) -> LLMCache:
+        """
+        Store LLM result in cache.
+        
+        Args:
+            cache_key: SHA256 hash of text content
+            cache_type: "classification" or "info_extraction"
+            result: LLM result dictionary
+            text_preview: Preview of original text (truncated to 1000 chars)
+            
+        Returns:
+            Created/updated LLMCache entry
+        """
+        session = self.get_session()
+        try:
+            # Truncate text preview if provided
+            if text_preview and len(text_preview) > 1000:
+                text_preview = text_preview[:1000]
+            
+            # Check if exists
+            existing = session.query(LLMCache).filter(
+                and_(
+                    LLMCache.cache_key == cache_key,
+                    LLMCache.cache_type == cache_type
+                )
+            ).first()
+            
+            if existing:
+                # Update existing entry
+                existing.result = result
+                existing.last_used_at = datetime.utcnow()
+                existing.text_preview = text_preview or existing.text_preview
+                session.commit()
+                session.refresh(existing)
+                return existing
+            
+            # Create new entry
+            cache_id = f"llm_cache_{uuid.uuid4().hex[:12]}"
+            cache_entry = LLMCache(
+                id=cache_id,
+                cache_key=cache_key,
+                cache_type=cache_type,
+                result=result,
+                text_preview=text_preview,
+                created_at=datetime.utcnow(),
+                last_used_at=datetime.utcnow(),
+                use_count=1.0
+            )
+            
+            session.add(cache_entry)
+            session.commit()
+            session.refresh(cache_entry)
+            
+            logger.debug("Stored LLM result in cache", cache_type=cache_type, cache_key=cache_key[:16])
+            return cache_entry
+            
+        except Exception as e:
+            session.rollback()
+            logger.error("Failed to store LLM cache", error=str(e))
+            raise
         finally:
             session.close()
 

@@ -97,6 +97,36 @@ class ScrapedContent(Base):
     )
 
 
+class LLMCache(Base):
+    """Cache for LLM analysis results to prevent duplicate API calls."""
+    
+    __tablename__ = "llm_cache"
+    
+    id = Column(String(50), primary_key=True)
+    
+    # Cache key: hash of text content + cache type
+    cache_key = Column(String(64), nullable=False, unique=True, index=True)  # SHA256 hash
+    cache_type = Column(String(50), nullable=False)  # "classification" or "info_extraction"
+    
+    # Original text (for debugging/verification, truncated to 1000 chars)
+    text_preview = Column(String(1000), nullable=True)
+    
+    # Cached result (JSON)
+    result = Column(JSON, nullable=False)
+    
+    # Metadata
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    last_used_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    use_count = Column(Float, default=1.0)  # Track how many times cache was hit
+    
+    # Indexes
+    __table_args__ = (
+        Index('idx_llm_cache_key', 'cache_key', unique=True),
+        Index('idx_llm_cache_type', 'cache_type'),
+        Index('idx_llm_cache_last_used', 'last_used_at'),
+    )
+
+
 class Lead(Base):
     """Lead/opportunity record (platform-agnostic)."""
     
