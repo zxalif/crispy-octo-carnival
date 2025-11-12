@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+data/*.db
+
+# Environment
+.env
+.env.local
+.env.example
+.env.production
+
+# Logs - exclude all logs
+logs/
+*.log
+*.log.*
+
+# Markdown documentation - exclude all markdown files except README.md
+md/
+*.md
+!README.md
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Distribution
+dist/
+build/
+*.egg-info/
+
+# Docker
+.dockerignore
+
+# Alembic
+alembic/versions/__pycache__/

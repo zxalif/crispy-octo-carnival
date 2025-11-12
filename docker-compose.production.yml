@@ -1,0 +1,185 @@
+# Docker Compose for Rixly - PRODUCTION
+# Uses native PostgreSQL and Redis (not Docker containers)
+# Port: 8000
+# 
+# IMPORTANT: This file is for production deployment on VPS
+# - Uses native PostgreSQL on host (via host.docker.internal)
+# - Uses native Redis on host (via host.docker.internal)
+# - No source code mounting (production build)
+# - Resource limits configured
+# - Scheduler can be enabled/disabled via environment variable
+#
+# SCALING:
+# - Current: Single instance, internal-only (no nginx needed)
+# - For scaling: Remove container_name and use --scale flag (requires nginx)
+# - For Docker Swarm: Use deploy.replicas (see SCALING_GUIDE.md)
+# NOTE: nginx is ONLY needed if scaling to multiple instances
+
+version: '3.8'
+
+services:
+  # ===== Rixly API Service =====
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.production
+    container_name: rixly-api  # Single instance - internal use only
+    ports:
+      - "127.0.0.1:8000:8000"  # Only bind to localhost (internal use only)
+      # Accessed by lead-api via Docker network: http://rixly-api:8000
+    environment:
+      # API Configuration
+      - API_KEY=${API_KEY}
+      
+      # Reddit API
+      - REDDIT_CLIENT_ID=${REDDIT_CLIENT_ID}
+      - REDDIT_CLIENT_SECRET=${REDDIT_CLIENT_SECRET}
+      - REDDIT_USER_AGENT=${REDDIT_USER_AGENT:-clienthunt/1.0}
+      
+      # LLM API Keys
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      
+      # Database (Native PostgreSQL on host)
+      # Use host.docker.internal to access host PostgreSQL
+      - DATABASE_URL=${DATABASE_URL}
+      # If DATABASE_URL not set, build from parts (must use host.docker.internal)
+      - DATABASE_HOST=${DATABASE_HOST:-host.docker.internal}
+      - DATABASE_PORT=${DATABASE_PORT:-5432}
+      - DATABASE_NAME=${DATABASE_NAME:-rixly}
+      - DATABASE_USER=${DATABASE_USER:-rixly}
+      - DATABASE_PASSWORD=${DATABASE_PASSWORD}
+      
+      # Application Settings
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOG_FILE=/app/logs/app.log
+      - ENVIRONMENT=production
+      
+      # Scheduler (can be enabled for simple setups, or use separate scheduler service)
+      # For production, we recommend using the separate scheduler service below
+      - SCHEDULER_ENABLED=${SCHEDULER_ENABLED:-false}
+      - SCHEDULER_CHECK_INTERVAL=${SCHEDULER_CHECK_INTERVAL:-60}
+      
+      # Job Tracking
+      - JOB_COOLDOWN_MINUTES=${JOB_COOLDOWN_MINUTES:-5}
+      
+      # Reddit Rate Limiting
+      - REDDIT_RATE_LIMIT_DELAY=${REDDIT_RATE_LIMIT_DELAY:-1.0}
+      - REDDIT_MAX_REQUESTS_PER_MINUTE=${REDDIT_MAX_REQUESTS_PER_MINUTE:-60}
+      - REDDIT_CONNECTION_TIMEOUT=${REDDIT_CONNECTION_TIMEOUT:-30.0}
+      - REDDIT_RETRY_ATTEMPTS=${REDDIT_RETRY_ATTEMPTS:-3}
+      - REDDIT_RETRY_DELAY=${REDDIT_RETRY_DELAY:-2.0}
+      - REDDIT_MAX_POSTS_PER_SEARCH=${REDDIT_MAX_POSTS_PER_SEARCH:-1000}
+      - REDDIT_MAX_COMMENTS_PER_POST=${REDDIT_MAX_COMMENTS_PER_POST:-500}
+      
+      # Redis Configuration (for rate limiting)
+      # Use host.docker.internal to access native Redis on host
+      - REDIS_HOST=${REDIS_HOST:-host.docker.internal}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - REDIS_DB=${REDIS_DB:-0}
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+    volumes:
+      - rixly_logs:/app/logs
+      # Note: No source code mounting in production (uses built image)
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # Access host PostgreSQL and Redis
+    networks:
+      - rixly-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          cpus: '1'
+          memory: 2G
+
+  # ===== Scheduler Service (RECOMMENDED for Production) =====
+  # 
+  # WHY SEPARATE SCHEDULER?
+  # - Heavy scraping jobs won't block API response times
+  # - Better resource isolation
+  # - Can scale independently
+  #
+  # USAGE:
+  # - API only: docker compose -f docker-compose.production.yml up api
+  # - Scheduler only: docker compose -f docker-compose.production.yml up scheduler
+  # - Both: docker compose -f docker-compose.production.yml up
+  #
+  # SCALING:
+  # - For Docker Swarm: Add deploy.replicas (see SCALING_GUIDE.md)
+  # - For Docker Compose: Remove container_name and use --scale flag
+  #
+  scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile.production
+    container_name: rixly-scheduler  # Single instance - internal use only
+    environment:
+      # Database (Native PostgreSQL on host)
+      # Use host.docker.internal to access host PostgreSQL
+      - DATABASE_URL=${DATABASE_URL}
+      # If DATABASE_URL not set, build from parts (must use host.docker.internal)
+      - DATABASE_HOST=${DATABASE_HOST:-host.docker.internal}
+      - DATABASE_PORT=${DATABASE_PORT:-5432}
+      - DATABASE_NAME=${DATABASE_NAME:-rixly}
+      - DATABASE_USER=${DATABASE_USER:-rixly}
+      - DATABASE_PASSWORD=${DATABASE_PASSWORD}
+      
+      # Reddit API
+      - REDDIT_CLIENT_ID=${REDDIT_CLIENT_ID}
+      - REDDIT_CLIENT_SECRET=${REDDIT_CLIENT_SECRET}
+      - REDDIT_USER_AGENT=${REDDIT_USER_AGENT:-clienthunt/1.0}
+      
+      # LLM API Keys
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      
+      # Application Settings
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOG_FILE=/app/logs/app.log
+      - ENVIRONMENT=production
+      
+      # Scheduler (enabled for this service)
+      - SCHEDULER_ENABLED=true
+      - SCHEDULER_CHECK_INTERVAL=${SCHEDULER_CHECK_INTERVAL:-60}
+      
+      # Job Tracking
+      - JOB_COOLDOWN_MINUTES=${JOB_COOLDOWN_MINUTES:-5}
+      
+      # Reddit Rate Limiting
+      - REDDIT_RATE_LIMIT_DELAY=${REDDIT_RATE_LIMIT_DELAY:-1.0}
+      - REDDIT_MAX_REQUESTS_PER_MINUTE=${REDDIT_MAX_REQUESTS_PER_MINUTE:-60}
+      - REDDIT_CONNECTION_TIMEOUT=${REDDIT_CONNECTION_TIMEOUT:-30.0}
+      - REDDIT_RETRY_ATTEMPTS=${REDDIT_RETRY_ATTEMPTS:-3}
+      - REDDIT_RETRY_DELAY=${REDDIT_RETRY_DELAY:-2.0}
+      - REDDIT_MAX_POSTS_PER_SEARCH=${REDDIT_MAX_POSTS_PER_SEARCH:-1000}
+      - REDDIT_MAX_COMMENTS_PER_POST=${REDDIT_MAX_COMMENTS_PER_POST:-500}
+    volumes:
+      - rixly_logs:/app/logs
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # Access host PostgreSQL and Redis
+    networks:
+      - rixly-network
+    restart: unless-stopped
+    command: python scripts/run_scheduler.py
+
+# ===== Networks =====
+networks:
+  rixly-network:
+    driver: bridge
+    name: rixly_rixly-network
+
+# ===== Volumes =====
+volumes:
+  rixly_logs:
+    driver: local
+    name: rixly-logs
+

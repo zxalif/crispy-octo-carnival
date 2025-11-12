@@ -1,0 +1,2 @@
+"""Webhook notifications module."""
+

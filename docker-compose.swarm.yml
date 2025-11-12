@@ -1,0 +1,180 @@
+# Docker Compose for Rixly - DOCKER SWARM MODE
+# This file is optimized for Docker Swarm with auto-scaling support
+# 
+# To use:
+#   1. docker swarm init
+#   2. docker stack deploy -c docker-compose.swarm.yml rixly
+#   3. docker service scale rixly_api=3  # Scale to 3 API instances
+#
+# IMPORTANT:
+# - Uses native PostgreSQL and Redis on host (via host.docker.internal)
+# - Requires Docker Swarm mode
+# - Includes nginx load balancer for API instances
+
+version: '3.8'
+
+services:
+  # ===== Nginx Load Balancer =====
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "127.0.0.1:8000:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      - rixly-network
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128M
+    depends_on:
+      - api
+
+  # ===== Rixly API Service =====
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.production
+    # No container_name - allows multiple replicas
+    environment:
+      # API Configuration
+      - API_KEY=${API_KEY}
+      
+      # Reddit API
+      - REDDIT_CLIENT_ID=${REDDIT_CLIENT_ID}
+      - REDDIT_CLIENT_SECRET=${REDDIT_CLIENT_SECRET}
+      - REDDIT_USER_AGENT=${REDDIT_USER_AGENT:-clienthunt/1.0}
+      
+      # LLM API Keys
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      
+      # Database (Native PostgreSQL on host)
+      - DATABASE_URL=${DATABASE_URL}
+      - DATABASE_HOST=${DATABASE_HOST:-host.docker.internal}
+      - DATABASE_PORT=${DATABASE_PORT:-5432}
+      - DATABASE_NAME=${DATABASE_NAME:-rixly}
+      - DATABASE_USER=${DATABASE_USER:-rixly}
+      - DATABASE_PASSWORD=${DATABASE_PASSWORD}
+      
+      # Application Settings
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOG_FILE=/app/logs/app.log
+      - ENVIRONMENT=production
+      - SCHEDULER_ENABLED=false
+      
+      # Redis Configuration
+      - REDIS_HOST=${REDIS_HOST:-host.docker.internal}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - REDIS_DB=${REDIS_DB:-0}
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      
+      # Reddit Rate Limiting
+      - REDDIT_RATE_LIMIT_DELAY=${REDDIT_RATE_LIMIT_DELAY:-1.0}
+      - REDDIT_MAX_REQUESTS_PER_MINUTE=${REDDIT_MAX_REQUESTS_PER_MINUTE:-60}
+      - REDDIT_CONNECTION_TIMEOUT=${REDDIT_CONNECTION_TIMEOUT:-30.0}
+      - REDDIT_RETRY_ATTEMPTS=${REDDIT_RETRY_ATTEMPTS:-3}
+      - REDDIT_RETRY_DELAY=${REDDIT_RETRY_DELAY:-2.0}
+      - REDDIT_MAX_POSTS_PER_SEARCH=${REDDIT_MAX_POSTS_PER_SEARCH:-1000}
+      - REDDIT_MAX_COMMENTS_PER_POST=${REDDIT_MAX_COMMENTS_PER_POST:-500}
+    volumes:
+      - rixly_logs:/app/logs
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - rixly-network
+    deploy:
+      replicas: 2  # Start with 2 API instances
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          cpus: '1'
+          memory: 2G
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # ===== Scheduler Service =====
+  scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile.production
+    environment:
+      # Database
+      - DATABASE_URL=${DATABASE_URL}
+      - DATABASE_HOST=${DATABASE_HOST:-host.docker.internal}
+      - DATABASE_PORT=${DATABASE_PORT:-5432}
+      - DATABASE_NAME=${DATABASE_NAME:-rixly}
+      - DATABASE_USER=${DATABASE_USER:-rixly}
+      - DATABASE_PASSWORD=${DATABASE_PASSWORD}
+      
+      # Reddit API
+      - REDDIT_CLIENT_ID=${REDDIT_CLIENT_ID}
+      - REDDIT_CLIENT_SECRET=${REDDIT_CLIENT_SECRET}
+      - REDDIT_USER_AGENT=${REDDIT_USER_AGENT:-clienthunt/1.0}
+      
+      # LLM API Keys
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      
+      # Application Settings
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOG_FILE=/app/logs/app.log
+      - ENVIRONMENT=production
+      - SCHEDULER_ENABLED=true
+      - SCHEDULER_CHECK_INTERVAL=${SCHEDULER_CHECK_INTERVAL:-60}
+      - JOB_COOLDOWN_MINUTES=${JOB_COOLDOWN_MINUTES:-5}
+      
+      # Reddit Rate Limiting
+      - REDDIT_RATE_LIMIT_DELAY=${REDDIT_RATE_LIMIT_DELAY:-1.0}
+      - REDDIT_MAX_REQUESTS_PER_MINUTE=${REDDIT_MAX_REQUESTS_PER_MINUTE:-60}
+      - REDDIT_CONNECTION_TIMEOUT=${REDDIT_CONNECTION_TIMEOUT:-30.0}
+      - REDDIT_RETRY_ATTEMPTS=${REDDIT_RETRY_ATTEMPTS:-3}
+      - REDDIT_RETRY_DELAY=${REDDIT_RETRY_DELAY:-2.0}
+      - REDDIT_MAX_POSTS_PER_SEARCH=${REDDIT_MAX_POSTS_PER_SEARCH:-1000}
+      - REDDIT_MAX_COMMENTS_PER_POST=${REDDIT_MAX_COMMENTS_PER_POST:-500}
+    volumes:
+      - rixly_logs:/app/logs
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - rixly-network
+    command: python scripts/run_scheduler.py
+    deploy:
+      replicas: 1  # Usually only need 1 scheduler
+      restart_policy:
+        condition: on-failure
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          cpus: '1'
+          memory: 2G
+
+networks:
+  rixly-network:
+    driver: overlay
+    attachable: true
+
+volumes:
+  rixly_logs:
+    driver: local
+

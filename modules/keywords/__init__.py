@@ -1,0 +1,2 @@
+"""Keywords module for Rixly."""
+

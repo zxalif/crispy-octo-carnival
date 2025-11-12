@@ -1,0 +1,194 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  # Note: This service has no profile, so it always starts when any profile is used
+  postgres:
+    image: postgres:15-alpine
+    # Platform: Auto-detect based on host (works on both Intel and Apple Silicon)
+    # Remove platform specification to use native architecture
+    container_name: rixly-postgres
+    environment:
+      POSTGRES_DB: rixly
+      POSTGRES_USER: rixly
+      POSTGRES_PASSWORD: rixly
+    ports:
+      - "5435:5432"  # Host port 5435 maps to container port 5432
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rixly"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - rixly-network
+    restart: always  # Always restart postgres, even if dependent services stop
+
+  # Rixly API
+  # Use --profile api to start the API service
+  # Default: docker-compose --profile api up (API + postgres)
+  # With scheduler: docker-compose --profile api --profile scheduler up (API + scheduler + postgres)
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rixly-api
+    profiles:
+      - api  # Only start with: docker-compose --profile api up
+    environment:
+      # Database
+      DATABASE_URL: postgresql://rixly:rixly@postgres:5432/rixly
+      # API
+      API_KEY: ${API_KEY:-dev_api_key}
+      # Reddit API (set these in .env or override)
+      REDDIT_CLIENT_ID: ${REDDIT_CLIENT_ID}
+      REDDIT_CLIENT_SECRET: ${REDDIT_CLIENT_SECRET}
+      REDDIT_USER_AGENT: ${REDDIT_USER_AGENT:-rixly/1.0}
+      # LLM API Keys (set at least one)
+      GROQ_API_KEY: ${GROQ_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      # Application
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      ENVIRONMENT: ${ENVIRONMENT:-development}  # Set to 'production' to disable hot reload
+      # Scheduler (disabled by default - use separate scheduler service with --profile scheduler)
+      SCHEDULER_ENABLED: ${SCHEDULER_ENABLED:-false}
+      SCHEDULER_CHECK_INTERVAL: ${SCHEDULER_CHECK_INTERVAL:-60}
+      # Job Tracking
+      JOB_COOLDOWN_MINUTES: ${JOB_COOLDOWN_MINUTES:-5}
+      # Reddit Rate Limiting
+      REDDIT_RATE_LIMIT_DELAY: ${REDDIT_RATE_LIMIT_DELAY:-1.0}
+      REDDIT_MAX_REQUESTS_PER_MINUTE: ${REDDIT_MAX_REQUESTS_PER_MINUTE:-60}
+      # Reddit Connection Settings
+      REDDIT_CONNECTION_TIMEOUT: ${REDDIT_CONNECTION_TIMEOUT:-30.0}
+      REDDIT_RETRY_ATTEMPTS: ${REDDIT_RETRY_ATTEMPTS:-3}
+      REDDIT_RETRY_DELAY: ${REDDIT_RETRY_DELAY:-2.0}
+      # Search Limits
+      REDDIT_MAX_POSTS_PER_SEARCH: ${REDDIT_MAX_POSTS_PER_SEARCH:-1000}
+      REDDIT_MAX_COMMENTS_PER_POST: ${REDDIT_MAX_COMMENTS_PER_POST:-500}
+    ports:
+      - "7101:8000"  # Host port 7101 maps to container port 8000
+    volumes:
+      - ./logs:/app/logs
+      - ./data:/app/data
+      # Mount source code for hot reload (file watching)
+      - ./core:/app/core
+      - ./modules:/app/modules
+      - ./api:/app/api
+      - ./alembic:/app/alembic
+      - ./scripts:/app/scripts
+      - ./run_api.py:/app/run_api.py
+      - ./alembic.ini:/app/alembic.ini
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Migrations run automatically on container startup via entrypoint script
+    networks:
+      - rixly-network
+    restart: unless-stopped
+    # Grace period for graceful shutdown
+    stop_grace_period: 10s
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    # Note: Container uses port 8000 internally, but host maps to 7101
+
+  # Scheduler Service (RECOMMENDED for production)
+  #
+  # WHY SEPARATE SCHEDULER?
+  # - Built-in scheduler runs in the same process as the API
+  # - Heavy scraping jobs can block/impact API response times
+  # - CPU/memory intensive scraping competes with API requests
+  # - Separate scheduler isolates scraping from API performance
+  #
+  # HOW IT WORKS:
+  # - The API service has a built-in scheduler (SCHEDULER_ENABLED=false by default)
+  # - This separate scheduler service runs in its own container (isolated)
+  #
+  # USAGE:
+  # - API only: docker-compose --profile api up
+  # - Scheduler only: docker-compose --profile scheduler up
+  # - Both: docker-compose --profile api --profile scheduler up
+  #
+  # WHEN TO USE:
+  # Option 1 (Development/Simple): Use built-in scheduler in API service
+  #   - Set SCHEDULER_ENABLED=true in .env or docker-compose override
+  #   - Run: docker-compose --profile api up
+  #   - Fine for light workloads or development
+  #   - API container handles both API requests AND scheduled scraping
+  #
+  # Option 2 (Production/Recommended): Use separate scheduler service
+  #   - Run: docker-compose --profile api --profile scheduler up
+  #   - API scheduler is already disabled (SCHEDULER_ENABLED=false)
+  #   - API container: handles only API requests (fast, responsive)
+  #   - Scheduler container: handles only scheduled scraping (isolated)
+  #   - Better performance, scalability, and fault isolation
+  #
+  # IMPORTANT: Don't run both schedulers at the same time - they will conflict!
+  scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rixly-scheduler
+    environment:
+      # Database
+      DATABASE_URL: postgresql://rixly:rixly@postgres:5432/rixly
+      # Reddit API
+      REDDIT_CLIENT_ID: ${REDDIT_CLIENT_ID}
+      REDDIT_CLIENT_SECRET: ${REDDIT_CLIENT_SECRET}
+      REDDIT_USER_AGENT: ${REDDIT_USER_AGENT:-rixly/1.0}
+      # LLM API Keys
+      GROQ_API_KEY: ${GROQ_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      # Application
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      ENVIRONMENT: ${ENVIRONMENT:-development}  # Set to 'production' to disable hot reload
+      # Scheduler
+      SCHEDULER_ENABLED: true
+      SCHEDULER_CHECK_INTERVAL: ${SCHEDULER_CHECK_INTERVAL:-60}
+      # Job Tracking
+      JOB_COOLDOWN_MINUTES: ${JOB_COOLDOWN_MINUTES:-5}
+      # Reddit Rate Limiting
+      REDDIT_RATE_LIMIT_DELAY: ${REDDIT_RATE_LIMIT_DELAY:-1.0}
+      REDDIT_MAX_REQUESTS_PER_MINUTE: ${REDDIT_MAX_REQUESTS_PER_MINUTE:-60}
+      # Reddit Connection Settings
+      REDDIT_CONNECTION_TIMEOUT: ${REDDIT_CONNECTION_TIMEOUT:-30.0}
+      REDDIT_RETRY_ATTEMPTS: ${REDDIT_RETRY_ATTEMPTS:-3}
+      REDDIT_RETRY_DELAY: ${REDDIT_RETRY_DELAY:-2.0}
+      # Search Limits
+      REDDIT_MAX_POSTS_PER_SEARCH: ${REDDIT_MAX_POSTS_PER_SEARCH:-1000}
+      REDDIT_MAX_COMMENTS_PER_POST: ${REDDIT_MAX_COMMENTS_PER_POST:-500}
+    volumes:
+      - ./logs:/app/logs
+      - ./data:/app/data
+      # Mount source code for hot reload (file watching) - same as API service
+      - ./core:/app/core
+      - ./modules:/app/modules
+      - ./api:/app/api
+      - ./alembic:/app/alembic
+      - ./scripts:/app/scripts
+      - ./run_api.py:/app/run_api.py
+      - ./alembic.ini:/app/alembic.ini
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Migrations run automatically on container startup via entrypoint script
+    networks:
+      - rixly-network
+    restart: unless-stopped
+    # Grace period for graceful shutdown
+    stop_grace_period: 10s
+    command: python scripts/run_scheduler.py
+    profiles:
+      - scheduler  # Only start with: docker-compose --profile scheduler up
+
+volumes:
+  postgres_data:
+
+networks:
+  rixly-network:
+    driver: bridge
+

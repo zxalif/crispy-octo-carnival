@@ -1,0 +1,67 @@
+# Rixly API Dockerfile - PRODUCTION
+# Optimized for production: no hot reload, no source code mounting
+FROM python:3.11-slim
+
+# Set working directory
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    postgresql-client \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements first (for better caching)
+COPY requirements.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Install Playwright browsers and system dependencies (for JavaScript rendering)
+# This installs Chromium browser and all required system libraries
+RUN playwright install chromium && \
+    playwright install-deps chromium
+
+# Copy application code
+COPY . .
+
+# Create logs directory
+RUN mkdir -p logs
+
+# Make migration script executable
+RUN chmod +x scripts/run_migrations.py
+
+# Expose port
+EXPOSE 8000
+
+# Health check (using curl instead of requests)
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+# Create entrypoint script that runs migrations then starts API
+# Production: No hot reload, no file watching
+RUN echo '#!/bin/bash\n\
+set -e\n\
+echo "========================================="\n\
+echo "Rixly API - Production Mode"\n\
+echo "========================================="\n\
+echo ""\n\
+echo "Step 1: Running database migrations..."\n\
+python scripts/run_migrations.py\n\
+if [ $? -ne 0 ]; then\n\
+    echo "ERROR: Migrations failed. Exiting."\n\
+    exit 1\n\
+fi\n\
+echo ""\n\
+echo "Step 2: Starting API server (production mode)..."\n\
+echo "  - Hot reload disabled"\n\
+echo "  - Optimized for performance"\n\
+echo "========================================="\n\
+echo ""\n\
+exec python run_api.py\n\
+' > /entrypoint.sh && chmod +x /entrypoint.sh
+
+# Run migrations and start API
+CMD ["/entrypoint.sh"]
+
