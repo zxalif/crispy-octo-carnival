@@ -1,14 +1,18 @@
 """
 Webhook notification sender.
-Sends HTTP POST requests to configured webhook URLs.
+Sends HTTP POST requests to configured webhook URLs with signature verification.
 """
 
 import asyncio
 from typing import Dict, Any, Optional
+import json
+import hmac
+import hashlib
 
 import httpx
 
 from core.logger import get_logger
+from core.config import get_config
 
 logger = get_logger(__name__)
 
@@ -94,7 +98,7 @@ class WebhookSender:
                 "id": keyword_search_id,
                 "name": keyword_search_name
             },
-            "statistics": {
+            "stats": {
                 "leads_created": stats.get("leads_created", 0),
                 "posts_scraped": stats.get("posts_scraped", 0),
                 "comments_scraped": stats.get("comments_scraped", 0),
@@ -137,7 +141,7 @@ class WebhookSender:
     
     async def _send(self, webhook_url: str, payload: Dict[str, Any]) -> bool:
         """
-        Send webhook request.
+        Send webhook request with optional signature.
         
         Args:
             webhook_url: Webhook URL
@@ -147,10 +151,31 @@ class WebhookSender:
             True if successful, False otherwise
         """
         try:
+            # Serialize payload to JSON bytes for signature calculation
+            payload_json = json.dumps(payload, sort_keys=True, separators=(',', ':'))
+            payload_bytes = payload_json.encode('utf-8')
+            
+            # Build headers
+            headers = {"Content-Type": "application/json"}
+            
+            # Add signature if webhook secret is configured
+            config = get_config()
+            if config.webhook_secret:
+                signature = hmac.new(
+                    config.webhook_secret.encode('utf-8'),
+                    payload_bytes,
+                    hashlib.sha256
+                ).hexdigest()
+                headers["X-Rixly-Signature"] = signature
+                logger.debug("Webhook signature generated", event=payload.get("event"))
+            else:
+                logger.debug("Webhook secret not configured - sending without signature", event=payload.get("event"))
+            
+            # Send webhook request
             response = await self.client.post(
                 webhook_url,
-                json=payload,
-                headers={"Content-Type": "application/json"}
+                content=payload_bytes,  # Send raw bytes to ensure signature matches
+                headers=headers
             )
             response.raise_for_status()
             

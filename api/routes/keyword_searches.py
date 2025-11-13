@@ -455,6 +455,14 @@ async def get_search_status(
     # Check if can start (cooldown info)
     can_start, reason = job_tracker.can_start_job(search_id)
     
+    # Calculate elapsed time if job is running
+    elapsed_seconds = None
+    if job_status and job_status.get("status") == "running":
+        elapsed_seconds = job_status.get("elapsed_seconds")
+    elif search_model.scraping_started_at and search_model.scraping_status in ["running", "processing"]:
+        # Fallback: calculate from database timestamp
+        elapsed_seconds = (datetime.utcnow() - search_model.scraping_started_at).total_seconds()
+    
     return {
         "search_id": search_id,
         "scraping_status": search_model.scraping_status,
@@ -466,5 +474,6 @@ async def get_search_status(
         "scraping_started_at": search_model.scraping_started_at.isoformat() if search_model.scraping_started_at else None,
         "scraping_completed_at": search_model.scraping_completed_at.isoformat() if search_model.scraping_completed_at else None,
         "scraping_error": search_model.scraping_error,
+        "elapsed_seconds": round(elapsed_seconds, 2) if elapsed_seconds else None,
         "job_info": job_status
     }

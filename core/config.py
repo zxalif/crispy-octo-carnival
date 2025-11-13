@@ -122,6 +122,12 @@ class Config(BaseSettings):
         description="Redis password (optional)"
     )
     
+    # Webhook Configuration
+    webhook_secret: Optional[str] = Field(
+        default=None,
+        description="Secret key for signing webhook requests (HMAC-SHA256). Should match RIXLY_WEBHOOK_SECRET in lead-api."
+    )
+    
     @property
     def is_production(self) -> bool:
         """Check if running in production."""
