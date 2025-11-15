@@ -150,6 +150,9 @@ class WebhookSender:
         Returns:
             True if successful, False otherwise
         """
+        # Extract event type early for logging (avoid conflicts with structlog's 'event' parameter)
+        webhook_event_type = payload.get("event")
+        
         try:
             # Serialize payload to JSON bytes for signature calculation
             payload_json = json.dumps(payload, sort_keys=True, separators=(',', ':'))
@@ -167,9 +170,9 @@ class WebhookSender:
                     hashlib.sha256
                 ).hexdigest()
                 headers["X-Rixly-Signature"] = signature
-                logger.debug("Webhook signature generated", event=payload.get("event"))
+                logger.debug("Webhook signature generated", webhook_event=webhook_event_type)
             else:
-                logger.debug("Webhook secret not configured - sending without signature", event=payload.get("event"))
+                logger.debug("Webhook secret not configured - sending without signature", webhook_event=webhook_event_type)
             
             # Send webhook request
             response = await self.client.post(
@@ -179,14 +182,14 @@ class WebhookSender:
             )
             response.raise_for_status()
             
-            logger.info("Webhook sent successfully", url=webhook_url, event=payload.get("event"))
+            logger.info("Webhook sent successfully", url=webhook_url, webhook_event=webhook_event_type)
             return True
             
         except httpx.HTTPError as e:
-            logger.warning("Webhook request failed", url=webhook_url, error=str(e))
+            logger.warning("Webhook request failed", url=webhook_url, error=str(e), webhook_event=webhook_event_type)
             return False
         except Exception as e:
-            logger.error("Unexpected error sending webhook", url=webhook_url, error=str(e))
+            logger.error("Unexpected error sending webhook", url=webhook_url, error=str(e), webhook_event=webhook_event_type)
             return False
     
     async def close(self):
